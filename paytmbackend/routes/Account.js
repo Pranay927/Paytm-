@@ -5,6 +5,7 @@ const {auth} = require('../middlewares/authentication.js')
 const { User, Account} = require('../db')
 const jwt = require('jsonwebtoken');
 const user = require('./user.js');
+const mongoose = require('mongoose')
 const secret = "897n092q3ei[-53dy7bb8"
 
 
@@ -27,38 +28,42 @@ router.get('/balance',auth, async (req, res)=>{
 
 router.get('/transfer', auth, async(req, res)=>{
     const userId = req.id;
-    let {to, amt} = req.body;
-    amt = parseInt(amt);
+   
+    const session =  await mongoose.startSession();
+    session.startTransaction();
+
+    const {to, amt} = req.body;
+    
     try{
         // sender
         const user  = await Account.findOne({
             userId,
-        }).select("balance");
+        }).select("balance").session(session);
         // console.log(user);
         // debit the sender & credit the reciever(to) _id
     
-        if(user.balance<amt) return res.status(400).json({msg:"Insufficient balance",
-            currentBalance:user.balance
-        })
+        if(user.balance<amt) {
+            await session.abortTransaction();
+            return res.status(400).json({msg:"Insufficient balance",
+                                            currentBalance:user.balance})
+    }
 
-        // await Account.findByIdAndUpdate({
-        //     userId,
-        //     {$inc,
-        //         balance: -amt
-        //     }
-        // })
         await Account.updateOne(
             { userId }, 
             { $inc: { balance: -amt } }, 
-        );
+        ).session(session);
 
         const reciever = await Account.findOneAndUpdate(
             {userId:to},
             {$inc :{ balance:amt}},
             {view:true}
 
-        )
-        console.log(reciever)
+        ).session(session);
+
+        // console.log(reciever)
+   
+        await session.commitTransaction();
+        
         const user2 = await User.findById(reciever.userId).select("username")
         console.log(user2.username)
         return res.json({
